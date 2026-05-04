@@ -293,11 +293,13 @@ Always return valid JSON with ALL fields including steps array.`
     if (hasSteps) {
       contentEl.innerHTML = `
         <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button onclick="showItemTab(this,'ingredients')" class="item-tab-btn active" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:linear-gradient(135deg,#F490B8,#A888E8);color:white;font-family:Nunito,sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Ingredients</button>
-          <button onclick="showItemTab(this,'directions')" class="item-tab-btn" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:white;color:#9A98A8;font-family:Nunito,sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Directions</button>
+          <button onclick="showItemTab(this,'ingredients')" class="item-tab-btn active" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:linear-gradient(135deg,#F490B8,#A888E8);color:white;font-family:Nunito,sans-serif;font-weight:800;font-size:12px;cursor:pointer;">Ingredients</button>
+          <button onclick="showItemTab(this,'directions')" class="item-tab-btn" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:white;color:#9A98A8;font-family:Nunito,sans-serif;font-weight:800;font-size:12px;cursor:pointer;">Directions</button>
+          <button onclick="showItemTab(this,'notes')" class="item-tab-btn" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:white;color:#9A98A8;font-family:Nunito,sans-serif;font-weight:800;font-size:12px;cursor:pointer;">My Notes</button>
         </div>
         <div id="tab-ingredients">${(d.mainContent||[]).map(item => `<div class="content-item checkable" onclick="this.classList.toggle('checked')"><span class="content-check">✓</span><span>${item}</span></div>`).join('')}</div>
         <div id="tab-directions" style="display:none">${(d.steps||[]).map((step,i) => `<div class="content-item"><span class="content-num">${i+1}</span><span>${step}</span></div>`).join('')}</div>
+        <div id="tab-notes" style="display:none"><textarea class="notes-textarea" placeholder="Add a note... what did you change? How did it turn out? Would you make it again?"></textarea></div>
       `;
     } else {
       contentEl.innerHTML = (d.mainContent || []).map((item, i) =>
@@ -933,8 +935,10 @@ body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--cha
     });
     btn.style.background = 'linear-gradient(135deg,#F490B8,#A888E8)';
     btn.style.color = 'white';
-    document.getElementById('tab-ingredients').style.display = tab === 'ingredients' ? 'block' : 'none';
-    document.getElementById('tab-directions').style.display = tab === 'directions' ? 'block' : 'none';
+    ['ingredients','directions','notes'].forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (el) el.style.display = t === tab ? 'block' : 'none';
+    });
   };
 
   // Search
