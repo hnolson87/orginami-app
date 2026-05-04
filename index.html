@@ -115,7 +115,13 @@ Detect what type of content this is and extract the relevant information. Return
   ],
   "source": "website or platform name",
   "emoji": "one relevant emoji for this category"
-}`
+}
+
+IMPORTANT RULES:
+- For recipes: keyInfo = prep time, cook time, servings. mainContent = ONLY the ingredients list (one per item, with amounts). Add a separate field called steps with the cooking directions.
+- For workouts: keyInfo = duration, difficulty, equipment. mainContent = list of exercises with sets/reps.
+- For articles/other: keyInfo = author, date, topic. mainContent = key points or takeaways.
+- Always return valid JSON. Never truncate.`
           }]
         })
       });
@@ -164,9 +170,12 @@ Detect what type of content this is and extract the relevant information. Return
 
     // Main content
     const contentEl = document.getElementById('preview-content');
-    contentEl.innerHTML = parsed.mainContent.map((item, i) =>
+    const items = parsed.mainContent || [];
+    contentEl.innerHTML = items.map((item, i) =>
       `<div class="content-item"><span class="content-num">${i + 1}</span><span>${item}</span></div>`
     ).join('');
+    // Store steps if present
+    if (parsed.steps) pendingSave.steps = parsed.steps;
 
     showScreen('preview');
   }
@@ -267,12 +276,25 @@ Detect what type of content this is and extract the relevant information. Return
     ).join('');
 
     const contentEl = document.getElementById('item-content');
-    contentEl.innerHTML = (d.mainContent || []).map((item, i) =>
-      `<div class="content-item checkable" onclick="this.classList.toggle('checked')">
-        <span class="content-check">✓</span>
-        <span>${item}</span>
-      </div>`
-    ).join('');
+    const hasSteps = d.steps && d.steps.length > 0;
+    
+    if (hasSteps) {
+      contentEl.innerHTML = `
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button onclick="showItemTab(this,'ingredients')" class="item-tab-btn active" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:linear-gradient(135deg,#F490B8,#A888E8);color:white;font-family:Nunito,sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Ingredients</button>
+          <button onclick="showItemTab(this,'directions')" class="item-tab-btn" style="flex:1;padding:8px;border-radius:10px;border:1.5px solid #EDE8F8;background:white;color:#9A98A8;font-family:Nunito,sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Directions</button>
+        </div>
+        <div id="tab-ingredients">${(d.mainContent||[]).map(item => `<div class="content-item checkable" onclick="this.classList.toggle('checked')"><span class="content-check">✓</span><span>${item}</span></div>`).join('')}</div>
+        <div id="tab-directions" style="display:none">${(d.steps||[]).map((step,i) => `<div class="content-item"><span class="content-num">${i+1}</span><span>${step}</span></div>`).join('')}</div>
+      `;
+    } else {
+      contentEl.innerHTML = (d.mainContent || []).map((item, i) =>
+        `<div class="content-item checkable" onclick="this.classList.toggle('checked')">
+          <span class="content-check">✓</span>
+          <span>${item}</span>
+        </div>`
+      ).join('');
+    }
 
     if (d.url) {
       document.getElementById('item-link').href = d.url;
@@ -890,6 +912,18 @@ body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--cha
     else if (hour < 17) greetEl.textContent = 'Good afternoon 🌤️';
     else greetEl.textContent = 'Good evening 🌙';
   }
+
+  // Tab switching for item view
+  window.showItemTab = (btn, tab) => {
+    document.querySelectorAll('.item-tab-btn').forEach(b => {
+      b.style.background = 'white';
+      b.style.color = '#9A98A8';
+    });
+    btn.style.background = 'linear-gradient(135deg,#F490B8,#A888E8)';
+    btn.style.color = 'white';
+    document.getElementById('tab-ingredients').style.display = tab === 'ingredients' ? 'block' : 'none';
+    document.getElementById('tab-directions').style.display = tab === 'directions' ? 'block' : 'none';
+  };
 
   // Search
   window.searchLibrary = (query) => {
