@@ -122,6 +122,8 @@ Detect what type of content this is and extract the relevant information. Return
       });
 
       const data = await response.json();
+      console.log('Claude response:', JSON.stringify(data).substring(0, 500));
+      if (!data.content || !data.content[0]) throw new Error('No content in response: ' + JSON.stringify(data).substring(0, 200));
       const text = data.content[0].text.trim().replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(text);
 
