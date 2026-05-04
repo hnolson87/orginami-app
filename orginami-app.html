@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orginami — Your saves deserve better.</title>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+  import { getFirestore, collection, addDoc, getDocs, query, orderBy, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+  // ── PASTE YOUR FIREBASE CONFIG HERE ──
+  const firebaseConfig = {
+    apiKey: "AIzaSyDzngiXbxvasQzF0qrF32vK4ZLUpSQc4wY",
+    authDomain: "orginami.firebaseapp.com",
+    projectId: "orginami",
+    storageBucket: "orginami.firebasestorage.app",
+    messagingSenderId: "27351748144",
+    appId: "1:27351748144:web:4b1920c7ebfbeb3781a7f5"
+  };
+
+  // ── YOUR CLOUDFLARE WORKER URL ──
+  const WORKER_URL = 'https://orginami-worker.hnolson87.workers.dev';
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  let currentUser = null;
+
+  // ── Auth state ──
+  onAuthStateChanged(auth, (user) => {
+    currentUser = user;
+    if (user) {
+      showScreen('library');
+      loadLibrary();
+    } else {
+      showScreen('auth');
+    }
+  });
+
+  // ── Screen management ──
+  function showScreen(name) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('screen-' + name).classList.add('active');
+    if (name === 'library') loadLibrary();
+  }
+  window.showScreen = showScreen;
+
+  // ── Auth ──
+  window.signUp = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value.trim();
+    const err = document.getElementById('auth-error');
+    try {
+      await createUserWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      err.textContent = e.message;
+    }
+  };
+
+  window.signIn = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value.trim();
+    const err = document.getElementById('auth-error');
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      err.textContent = e.message;
+    }
+  };
+
+  window.logOut = async () => {
+    await signOut(auth);
+  };
+
+  // ── Parse URL with Claude ──
+  window.parseURL = async () => {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) return;
+
+    showScreen('parsing');
+    document.getElementById('parsing-url').textContent = url;
+
+    try {
+      // Fetch the page content
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const pageRes = await fetch(proxyUrl);
+      const pageData = await pageRes.json();
+      const pageContent = pageData.contents ? pageData.contents.substring(0, 8000) : '';
+
+      // Ask Claude to parse it
+      const response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          system: `You are Orginami's AI parser. Extract structured information from web content. Always respond with ONLY valid JSON, no markdown, no backticks.`,
+          messages: [{
+            role: 'user',
+            content: `Parse this web content from URL: ${url}
+
+Content: ${pageContent}
+
+Detect what type of content this is and extract the relevant information. Return ONLY this JSON:
+{
+  "title": "the title of this content",
+  "category": "one of: Recipe, Workout, Wellness, Cars & Mods, Home & DIY, Natural Living, Travel, Just Save It",
+  "summary": "2 sentence summary of what this is",
+  "keyInfo": [
+    {"label": "relevant label", "value": "relevant value"},
+    {"label": "relevant label", "value": "relevant value"},
+    {"label": "relevant label", "value": "relevant value"}
+  ],
+  "mainContent": [
+    "key point or step or ingredient 1",
+    "key point or step or ingredient 2",
+    "key point or step or ingredient 3",
+    "key point or step or ingredient 4",
+    "key point or step or ingredient 5"
+  ],
+  "source": "website or platform name",
+  "emoji": "one relevant emoji for this category"
+}`
+          }]
+        })
+      });
+
+      const data = await response.json();
+      const text = data.content[0].text.trim().replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(text);
+
+      // Show preview
+      showPreview(parsed, url);
+
+    } catch (e) {
+      console.error(e);
+      // Fallback
+      showPreview({
+        title: 'Saved Link',
+        category: 'Just Save It',
+        summary: 'This link has been saved to your Orginami library.',
+        keyInfo: [{ label: 'URL', value: url }],
+        mainContent: ['Content saved successfully'],
+        source: new URL(url).hostname,
+        emoji: '📚'
+      }, url);
+    }
+  };
+
+  let pendingSave = null;
+
+  function showPreview(parsed, url) {
+    pendingSave = { ...parsed, url, savedAt: new Date().toISOString() };
+    document.getElementById('preview-emoji').textContent = parsed.emoji;
+    document.getElementById('preview-category').textContent = parsed.category;
+    document.getElementById('preview-title').textContent = parsed.title;
+    document.getElementById('preview-summary').textContent = parsed.summary;
+    document.getElementById('preview-source').textContent = parsed.source;
+
+    // Key info
+    const keyInfoEl = document.getElementById('preview-keyinfo');
+    keyInfoEl.innerHTML = parsed.keyInfo.map(k =>
+      `<div class="key-chip"><span class="key-label">${k.label}</span><span class="key-value">${k.value}</span></div>`
+    ).join('');
+
+    // Main content
+    const contentEl = document.getElementById('preview-content');
+    contentEl.innerHTML = parsed.mainContent.map((item, i) =>
+      `<div class="content-item"><span class="content-num">${i + 1}</span><span>${item}</span></div>`
+    ).join('');
+
+    showScreen('preview');
+  }
+
+  window.saveToLibrary = async () => {
+    if (!pendingSave || !currentUser) return;
+    try {
+      await addDoc(collection(db, 'users', currentUser.uid, 'saves'), pendingSave);
+      document.getElementById('url-input').value = '';
+      pendingSave = null;
+      showScreen('library');
+    } catch (e) {
+      console.error('Save error:', e);
+    }
+  };
+
+  window.discardPreview = () => {
+    pendingSave = null;
+    showScreen('save');
+  };
+
+  // ── Load library ──
+  async function loadLibrary() {
+    if (!currentUser) return;
+    const libraryEl = document.getElementById('library-grid');
+    libraryEl.innerHTML = '<div class="loading-msg">Loading your saves... ✨</div>';
+
+    try {
+      const q = query(collection(db, 'users', currentUser.uid, 'saves'), orderBy('savedAt', 'desc'));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        libraryEl.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-emoji">🌸</div>
+            <div class="empty-title">Your library is empty</div>
+            <div class="empty-sub">Paste your first link and watch the magic happen</div>
+            <button class="btn-primary" onclick="showScreen('save')">Save something →</button>
+          </div>`;
+        return;
+      }
+
+      const categoryColors = {
+        'Recipe': '#F9B8D0', 'Workout': '#F9C8A0', 'Wellness': '#C9B8F0',
+        'Cars & Mods': '#A8D8F0', 'Home & DIY': '#F9E8A0', 'Natural Living': '#A8F0E8',
+        'Travel': '#F9A8A8', 'Just Save It': '#B8F0C8'
+      };
+
+      libraryEl.innerHTML = snapshot.docs.map(doc => {
+        const d = doc.data();
+        const color = categoryColors[d.category] || '#EDE8F8';
+        const date = new Date(d.savedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return `
+          <div class="save-card" onclick="openItem('${doc.id}')">
+            <div class="save-card-header" style="background:linear-gradient(135deg,${color}44,${color}22);">
+              <span class="save-card-emoji">${d.emoji || '📚'}</span>
+              <button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${doc.id}')">×</button>
+            </div>
+            <div class="save-card-body">
+              <div class="save-card-cat" style="color:${color}bb;">${d.category}</div>
+              <div class="save-card-title">${d.title}</div>
+              <div class="save-card-meta">${d.source} · ${date}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      // Store docs for opening
+      window._savedDocs = {};
+      snapshot.docs.forEach(doc => { window._savedDocs[doc.id] = doc.data(); });
+
+    } catch (e) {
+      console.error(e);
+      libraryEl.innerHTML = '<div class="loading-msg">Error loading library. Try refreshing.</div>';
+    }
+  }
+
+  window.openItem = (id) => {
+    const d = window._savedDocs[id];
+    if (!d) return;
+    const categoryColors = {
+      'Recipe': '#F9B8D0', 'Workout': '#F9C8A0', 'Wellness': '#C9B8F0',
+      'Cars & Mods': '#A8D8F0', 'Home & DIY': '#F9E8A0', 'Natural Living': '#A8F0E8',
+      'Travel': '#F9A8A8', 'Just Save It': '#B8F0C8'
+    };
+    const color = categoryColors[d.category] || '#EDE8F8';
+
+    document.getElementById('item-emoji').textContent = d.emoji || '📚';
+    document.getElementById('item-category').textContent = d.category;
+    document.getElementById('item-title').textContent = d.title;
+    document.getElementById('item-summary').textContent = d.summary;
+    document.getElementById('item-source').textContent = d.source;
+    document.getElementById('item-header').style.background = `linear-gradient(160deg, ${color}33, transparent)`;
+    document.getElementById('item-header').style.borderBottom = `2px solid ${color}`;
+
+    const keyInfoEl = document.getElementById('item-keyinfo');
+    keyInfoEl.innerHTML = (d.keyInfo || []).map(k =>
+      `<div class="key-chip"><span class="key-label">${k.label}</span><span class="key-value">${k.value}</span></div>`
+    ).join('');
+
+    const contentEl = document.getElementById('item-content');
+    contentEl.innerHTML = (d.mainContent || []).map((item, i) =>
+      `<div class="content-item checkable" onclick="this.classList.toggle('checked')">
+        <span class="content-check">✓</span>
+        <span>${item}</span>
+      </div>`
+    ).join('');
+
+    if (d.url) {
+      document.getElementById('item-link').href = d.url;
+      document.getElementById('item-link').style.display = 'flex';
+    } else {
+      document.getElementById('item-link').style.display = 'none';
+    }
+
+    showScreen('item');
+  };
+
+  window.deleteItem = async (id) => {
+    if (!currentUser) return;
+    if (!confirm('Delete this save?')) return;
+    await deleteDoc(doc(db, 'users', currentUser.uid, 'saves', id));
+    delete window._savedDocs[id];
+    loadLibrary();
+  };
+
+  // Filter library
+  window.filterLibrary = (category) => {
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    event.target.classList.add('active');
+    const cards = document.querySelectorAll('.save-card');
+    cards.forEach(card => {
+      const cat = card.querySelector('.save-card-cat').textContent;
+      card.style.display = (category === 'All' || cat === category) ? 'flex' : 'none';
+    });
+  };
+</script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;0,800;0,900;1,400&family=DM+Serif+Display:ital@0;1&display=swap');
+
+:root {
+  --pink:    #F9B8D0;
+  --lavender:#C9B8F0;
+  --blue:    #A8D8F0;
+  --orange:  #F9C8A0;
+  --aqua:    #A8F0E8;
+  --mint:    #B8F0C8;
+  --white:   #FFFFFF;
+  --cream:   #FDF8F4;
+  --ice:     #F8F6FF;
+  --charcoal:#2D2D2D;
+  --mid:     #9A98A8;
+  --light:   #EDE8F8;
+  --grad:    linear-gradient(135deg, #F490B8, #A888E8, #60B8E8);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--charcoal); min-height:100vh; }
+
+/* ── Screens ── */
+.screen { display:none; min-height:100vh; flex-direction:column; }
+.screen.active { display:flex; }
+
+/* ── Nav ── */
+.nav {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 20px;
+  background:rgba(253,248,244,0.95);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--light);
+  position:sticky; top:0; z-index:100;
+  flex-shrink:0;
+}
+.nav-logo {
+  font-weight:800; font-size:20px;
+  background:var(--grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.nav-actions { display:flex; gap:8px; align-items:center; }
+
+/* ── Buttons ── */
+.btn-primary {
+  padding:12px 24px; border-radius:100px;
+  background:var(--grad); color:white;
+  font-family:'Nunito',sans-serif; font-size:14px; font-weight:800;
+  border:none; cursor:pointer;
+  box-shadow:0 4px 16px rgba(168,136,232,0.3);
+  transition:transform 0.2s, box-shadow 0.2s;
+}
+.btn-primary:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(168,136,232,0.4); }
+.btn-secondary {
+  padding:12px 24px; border-radius:100px;
+  background:var(--ice); color:var(--mid);
+  font-family:'Nunito',sans-serif; font-size:14px; font-weight:700;
+  border:1.5px solid var(--light); cursor:pointer;
+}
+.btn-ghost {
+  padding:8px 16px; border-radius:100px;
+  background:transparent; color:var(--mid);
+  font-family:'Nunito',sans-serif; font-size:13px; font-weight:700;
+  border:1.5px solid var(--light); cursor:pointer;
+}
+
+/* ── AUTH SCREEN ── */
+#screen-auth {
+  align-items:center; justify-content:center;
+  background:radial-gradient(ellipse at 50% 0%, #F9B8D022, transparent 60%),
+             radial-gradient(ellipse at 80% 100%, #A8D8F022, transparent 60%), var(--cream);
+}
+.auth-card {
+  width:100%; max-width:400px;
+  background:white; border-radius:24px;
+  padding:40px 32px;
+  box-shadow:0 8px 40px rgba(168,136,232,0.12);
+  border:1px solid var(--light);
+  margin:24px;
+}
+.auth-logo {
+  text-align:center; margin-bottom:28px;
+}
+.auth-logo-text {
+  font-family:'Nunito',sans-serif; font-weight:800; font-size:28px;
+  background:var(--grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.auth-logo-sub { font-size:14px; color:var(--mid); margin-top:4px; }
+.auth-input {
+  width:100%; padding:14px 18px; border-radius:14px;
+  border:1.5px solid var(--light); background:var(--ice);
+  font-family:'Nunito',sans-serif; font-size:15px; color:var(--charcoal);
+  outline:none; margin-bottom:12px;
+  transition:border-color 0.2s;
+}
+.auth-input:focus { border-color:var(--lavender); }
+.auth-actions { display:flex; gap:10px; margin-top:4px; }
+.auth-actions .btn-primary, .auth-actions .btn-secondary { flex:1; text-align:center; }
+.auth-error { font-size:12px; color:#e84242; margin-top:8px; min-height:18px; }
+.auth-divider { text-align:center; color:var(--mid); font-size:13px; margin:16px 0; }
+
+/* ── LIBRARY SCREEN ── */
+.library-header {
+  padding:20px 20px 0;
+}
+.library-greeting-time { font-size:12px; color:var(--mid); font-weight:600; margin-bottom:3px; }
+.library-greeting-name {
+  font-family:'DM Serif Display',serif; font-size:26px; color:var(--charcoal); margin-bottom:16px;
+}
+.library-greeting-name em {
+  font-style:italic;
+  background:var(--grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+
+/* Search */
+.search-bar {
+  display:flex; align-items:center; gap:10px;
+  background:white; border-radius:14px; padding:12px 16px;
+  border:1.5px solid var(--light); margin-bottom:16px;
+  box-shadow:0 2px 8px rgba(168,136,232,0.06);
+}
+.search-bar input {
+  border:none; outline:none; background:transparent;
+  font-family:'Nunito',sans-serif; font-size:14px; color:var(--charcoal); flex:1;
+}
+.search-bar input::placeholder { color:var(--mid); }
+
+/* Filter chips */
+.filter-row {
+  display:flex; gap:8px; overflow-x:auto; padding:0 20px 16px; scrollbar-width:none;
+}
+.filter-row::-webkit-scrollbar { display:none; }
+.filter-chip {
+  flex-shrink:0; padding:6px 14px; border-radius:100px;
+  font-size:12px; font-weight:700; cursor:pointer;
+  background:white; color:var(--mid); border:1.5px solid var(--light);
+  transition:all 0.2s; white-space:nowrap;
+}
+.filter-chip.active {
+  background:var(--grad); color:white; border-color:transparent;
+}
+
+/* Library grid */
+.library-grid {
+  display:grid; grid-template-columns:repeat(2,1fr);
+  gap:12px; padding:0 16px 100px;
+}
+
+/* Save cards */
+.save-card {
+  background:white; border-radius:18px; overflow:hidden;
+  flex-direction:column; cursor:pointer;
+  box-shadow:0 2px 10px rgba(0,0,0,0.05);
+  border:1px solid var(--light);
+  transition:transform 0.2s, box-shadow 0.2s;
+  display:flex;
+}
+.save-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,0.1); }
+.save-card-header {
+  padding:16px 12px 12px;
+  display:flex; justify-content:space-between; align-items:flex-start;
+}
+.save-card-emoji { font-size:28px; }
+.delete-btn {
+  width:22px; height:22px; border-radius:50%;
+  background:rgba(0,0,0,0.08); border:none; cursor:pointer;
+  font-size:14px; color:var(--mid); display:flex; align-items:center; justify-content:center;
+  line-height:1;
+}
+.save-card-body { padding:0 12px 14px; }
+.save-card-cat { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px; }
+.save-card-title { font-size:13px; font-weight:800; color:var(--charcoal); line-height:1.3; margin-bottom:6px; }
+.save-card-meta { font-size:10px; color:var(--mid); font-weight:600; }
+
+/* Empty state */
+.empty-state {
+  grid-column:1/-1; display:flex; flex-direction:column;
+  align-items:center; text-align:center; padding:60px 20px; gap:12px;
+}
+.empty-emoji { font-size:52px; }
+.empty-title { font-family:'DM Serif Display',serif; font-size:22px; color:var(--charcoal); }
+.empty-sub { font-size:14px; color:var(--mid); line-height:1.6; max-width:220px; }
+.loading-msg { grid-column:1/-1; text-align:center; padding:40px; color:var(--mid); font-size:14px; }
+
+/* FAB */
+.fab {
+  position:fixed; bottom:24px; right:20px;
+  background:var(--grad); color:white;
+  width:56px; height:56px; border-radius:18px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:26px; font-weight:800;
+  box-shadow:0 8px 24px rgba(168,136,232,0.45);
+  cursor:pointer; border:none; z-index:50;
+  transition:transform 0.2s;
+}
+.fab:hover { transform:scale(1.05); }
+
+/* Bottom nav */
+.bottom-nav {
+  position:fixed; bottom:0; left:0; right:0;
+  background:rgba(253,248,244,0.97);
+  backdrop-filter:blur(16px);
+  border-top:1px solid var(--light);
+  padding:8px 0 20px;
+  display:flex; justify-content:space-around;
+  z-index:40;
+}
+.bot-nav-item {
+  display:flex; flex-direction:column; align-items:center;
+  gap:2px; font-size:9px; font-weight:700; color:var(--mid);
+  cursor:pointer; background:none; border:none; font-family:'Nunito',sans-serif;
+}
+.bot-nav-item.active { color:#A888E8; }
+.bot-nav-icon { font-size:20px; }
+
+/* ── SAVE SCREEN ── */
+#screen-save {
+  align-items:center; justify-content:center;
+  background:radial-gradient(ellipse at 30% 20%, #F9B8D022, transparent 50%),
+             radial-gradient(ellipse at 70% 80%, #A8D8F022, transparent 50%), var(--cream);
+}
+.save-card-wrap {
+  width:100%; max-width:480px;
+  background:white; border-radius:24px;
+  padding:32px 28px;
+  box-shadow:0 8px 40px rgba(168,136,232,0.12);
+  border:1px solid var(--light);
+  margin:24px;
+}
+.save-title {
+  font-family:'DM Serif Display',serif; font-size:26px; color:var(--charcoal);
+  margin-bottom:6px; line-height:1.2;
+}
+.save-title em {
+  font-style:italic;
+  background:var(--grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.save-sub { font-size:14px; color:var(--mid); margin-bottom:24px; line-height:1.6; }
+
+.url-input-wrap {
+  border-radius:16px; padding:2px;
+  background:var(--grad); margin-bottom:14px;
+}
+.url-input {
+  width:100%; padding:14px 18px; border-radius:14px;
+  border:none; background:var(--ice);
+  font-family:'Nunito',sans-serif; font-size:15px; color:var(--charcoal);
+  outline:none;
+}
+.url-input::placeholder { color:var(--mid); }
+
+.platform-chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; }
+.platform-chip {
+  padding:5px 12px; border-radius:100px;
+  font-size:11px; font-weight:700;
+  background:var(--ice); color:var(--mid);
+  border:1.5px solid var(--light);
+}
+
+/* ── PARSING SCREEN ── */
+#screen-parsing {
+  align-items:center; justify-content:center;
+  background:radial-gradient(ellipse at 50% 30%, #C9B8F022, transparent 60%), var(--cream);
+}
+.parsing-wrap { text-align:center; padding:40px 24px; }
+.parsing-o {
+  width:100px; height:100px; margin:0 auto 32px;
+  animation:spin 3s linear infinite;
+}
+@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.parsing-title {
+  font-family:'DM Serif Display',serif; font-size:24px; color:var(--charcoal); margin-bottom:8px;
+}
+.parsing-title em { font-style:italic; background:var(--grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.parsing-url { font-size:12px; color:var(--mid); margin-bottom:32px; word-break:break-all; max-width:300px; }
+.parsing-steps { display:flex; flex-direction:column; gap:10px; max-width:260px; margin:0 auto; }
+.parsing-step { display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; }
+.step-dot {
+  width:24px; height:24px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; flex-shrink:0;
+}
+.step-done { background:var(--mint); color:white; }
+.step-active { background:var(--grad); color:white; animation:pulse 1.5s ease-in-out infinite; }
+.step-pending { background:var(--light); color:var(--mid); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ── PREVIEW SCREEN ── */
+#screen-preview { background:var(--cream); }
+.preview-header {
+  padding:20px 20px 16px;
+  border-bottom:1px solid var(--light);
+  background:white;
+}
+.preview-body { flex:1; overflow-y:auto; padding:20px; padding-bottom:100px; }
+
+/* ── ITEM SCREEN ── */
+#screen-item { background:var(--cream); }
+.item-header {
+  padding:20px 20px 16px;
+  border-bottom:2px solid var(--light);
+  flex-shrink:0;
+}
+.item-body { flex:1; overflow-y:auto; padding:20px; padding-bottom:100px; }
+
+/* Shared preview/item styles */
+.item-emoji { font-size:36px; margin-bottom:8px; display:block; }
+.item-cat-badge {
+  display:inline-block; padding:4px 12px; border-radius:100px;
+  font-size:11px; font-weight:800; background:var(--pink); color:white;
+  margin-bottom:8px;
+}
+.item-title {
+  font-family:'DM Serif Display',serif; font-size:22px; color:var(--charcoal);
+  line-height:1.2; margin-bottom:6px;
+}
+.item-source { font-size:12px; color:var(--mid); font-weight:600; margin-bottom:14px; }
+.item-summary { font-size:14px; color:var(--mid); line-height:1.7; margin-bottom:16px; }
+
+.keyinfo-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.key-chip {
+  display:flex; flex-direction:column;
+  background:white; border-radius:12px; padding:8px 12px;
+  border:1px solid var(--light);
+}
+.key-label { font-size:9px; font-weight:800; color:var(--mid); text-transform:uppercase; letter-spacing:0.1em; }
+.key-value { font-size:13px; font-weight:800; color:var(--charcoal); }
+
+.section-title { font-size:11px; font-weight:800; color:var(--mid); letter-spacing:0.15em; text-transform:uppercase; margin-bottom:10px; }
+
+.content-item {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:10px 14px; background:white; border-radius:12px;
+  margin-bottom:8px; border:1px solid var(--light);
+  font-size:14px; color:var(--charcoal); font-weight:500; line-height:1.5;
+}
+.content-item.checkable { cursor:pointer; transition:all 0.2s; }
+.content-item.checkable.checked { background:#f0fdf4; border-color:var(--mint); text-decoration:line-through; color:var(--mid); }
+.content-num {
+  width:22px; height:22px; border-radius:8px;
+  background:var(--grad); color:white;
+  font-size:11px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.content-check {
+  width:22px; height:22px; border-radius:50%;
+  border:2px solid var(--light); background:white;
+  font-size:11px; color:transparent;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  transition:all 0.2s;
+}
+.content-item.checked .content-check { background:var(--mint); border-color:var(--mint); color:white; }
+
+.item-link {
+  display:flex; align-items:center; gap:8px;
+  padding:12px 16px; background:white; border-radius:14px;
+  border:1.5px solid var(--light); text-decoration:none;
+  font-size:13px; font-weight:700; color:var(--mid);
+  margin-top:16px;
+}
+
+.preview-actions { display:flex; gap:10px; padding:16px 20px; background:white; border-top:1px solid var(--light); }
+.preview-actions .btn-primary { flex:1; }
+.preview-actions .btn-secondary { flex:1; }
+
+/* Notes */
+.notes-wrap { margin-top:16px; }
+.notes-textarea {
+  width:100%; padding:14px; border-radius:14px;
+  border:1.5px solid var(--light); background:white;
+  font-family:'Nunito',sans-serif; font-size:14px; color:var(--charcoal);
+  outline:none; resize:none; min-height:80px; line-height:1.6;
+}
+.notes-textarea:focus { border-color:var(--lavender); }
+.notes-textarea::placeholder { color:var(--mid); }
+
+/* Back button */
+.back-btn {
+  display:flex; align-items:center; gap:6px;
+  font-size:13px; font-weight:700; color:var(--mid);
+  background:none; border:none; cursor:pointer;
+  font-family:'Nunito',sans-serif; margin-bottom:12px;
+}
+</style>
+</head>
+<body>
+
+<!-- ════════ AUTH SCREEN ════════ -->
+<div class="screen active" id="screen-auth">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg width="48" height="48" viewBox="0 0 120 120" fill="none" style="display:block;margin:0 auto 8px;">
+        <defs><linearGradient id="og" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#F490B8"/><stop offset="50%" stop-color="#A888E8"/><stop offset="100%" stop-color="#60B8E8"/></linearGradient></defs>
+        <polygon points="20,60 35,25 85,25 100,60 85,95 35,95" fill="url(#og)"/>
+        <polygon points="36,60 46,38 74,38 84,60 74,82 46,82" fill="white"/>
+      </svg>
+      <div class="auth-logo-text">orginami</div>
+      <div class="auth-logo-sub">Your saves deserve better 🌸</div>
+    </div>
+    <input class="auth-input" type="email" id="auth-email" placeholder="your@email.com"/>
+    <input class="auth-input" type="password" id="auth-password" placeholder="password"/>
+    <div class="auth-actions">
+      <button class="btn-primary" onclick="signIn()">Sign In</button>
+      <button class="btn-secondary" onclick="signUp()">Sign Up</button>
+    </div>
+    <div class="auth-error" id="auth-error"></div>
+  </div>
+</div>
+
+<!-- ════════ LIBRARY SCREEN ════════ -->
+<div class="screen" id="screen-library">
+  <div class="nav">
+    <div class="nav-logo">orginami</div>
+    <div class="nav-actions">
+      <button class="btn-ghost" onclick="logOut()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="library-header">
+    <div class="library-greeting-time" id="greeting-time">Good morning ☀️</div>
+    <div class="library-greeting-name">Your <em>Library.</em></div>
+
+    <div class="search-bar">
+      <span>🔍</span>
+      <input type="text" placeholder="Search your saves..." oninput="searchLibrary(this.value)"/>
+    </div>
+  </div>
+
+  <div class="filter-row">
+    <button class="filter-chip active" onclick="filterLibrary('All')">All</button>
+    <button class="filter-chip" onclick="filterLibrary('Recipe')">🍽️ Recipes</button>
+    <button class="filter-chip" onclick="filterLibrary('Workout')">💪 Workouts</button>
+    <button class="filter-chip" onclick="filterLibrary('Wellness')">✨ Wellness</button>
+    <button class="filter-chip" onclick="filterLibrary('Cars & Mods')">🚗 Cars</button>
+    <button class="filter-chip" onclick="filterLibrary('Home & DIY')">🏠 Home</button>
+    <button class="filter-chip" onclick="filterLibrary('Natural Living')">🌿 Natural</button>
+    <button class="filter-chip" onclick="filterLibrary('Travel')">✈️ Travel</button>
+  </div>
+
+  <div class="library-grid" id="library-grid">
+    <div class="loading-msg">Loading... ✨</div>
+  </div>
+
+  <!-- FAB -->
+  <button class="fab" onclick="showScreen('save')">+</button>
+
+  <!-- Bottom Nav -->
+  <div class="bottom-nav">
+    <button class="bot-nav-item active" onclick="showScreen('library')">
+      <span class="bot-nav-icon">🏠</span>Library
+    </button>
+    <button class="bot-nav-item" onclick="showScreen('save')">
+      <span class="bot-nav-icon">＋</span>Save
+    </button>
+    <button class="bot-nav-item">
+      <span class="bot-nav-icon">👤</span>Me
+    </button>
+  </div>
+</div>
+
+<!-- ════════ SAVE SCREEN ════════ -->
+<div class="screen" id="screen-save">
+  <div class="nav">
+    <div class="nav-logo">orginami</div>
+    <button class="btn-ghost" onclick="showScreen('library')">← Library</button>
+  </div>
+
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;">
+    <div class="save-card-wrap">
+      <div class="save-title">Drop a link,<br/><em>any link.</em></div>
+      <div class="save-sub">From TikTok, Instagram, YouTube, any blog — Orginami reads it and organizes it for you.</div>
+
+      <div class="url-input-wrap">
+        <input class="url-input" type="url" id="url-input" placeholder="https://..." onkeydown="if(event.key==='Enter') parseURL()"/>
+      </div>
+
+      <div class="platform-chips">
+        <span class="platform-chip">🎵 TikTok</span>
+        <span class="platform-chip">📸 Instagram</span>
+        <span class="platform-chip">▶️ YouTube</span>
+        <span class="platform-chip">📌 Pinterest</span>
+        <span class="platform-chip">🌐 Any URL</span>
+      </div>
+
+      <button class="btn-primary" style="width:100%;" onclick="parseURL()">Save it ✨</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ PARSING SCREEN ════════ -->
+<div class="screen" id="screen-parsing">
+  <div class="parsing-wrap">
+    <svg class="parsing-o" width="100" height="100" viewBox="0 0 120 120" fill="none">
+      <defs><linearGradient id="pg" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#F490B8"/><stop offset="50%" stop-color="#A888E8"/><stop offset="100%" stop-color="#60B8E8"/></linearGradient></defs>
+      <polygon points="20,60 35,25 85,25 100,60 85,95 35,95" stroke="url(#pg)" stroke-width="3" fill="none"/>
+      <polygon points="36,60 46,38 74,38 84,60 74,82 46,82" stroke="url(#pg)" stroke-width="2" fill="none" opacity="0.5"/>
+    </svg>
+
+    <div class="parsing-title">Reading your<br/><em>link...</em></div>
+    <div class="parsing-url" id="parsing-url"></div>
+
+    <div class="parsing-steps">
+      <div class="parsing-step">
+        <div class="step-dot step-done">✓</div>
+        <span>Link detected</span>
+      </div>
+      <div class="parsing-step">
+        <div class="step-dot step-active">✦</div>
+        <span>Reading content...</span>
+      </div>
+      <div class="parsing-step">
+        <div class="step-dot step-pending">○</div>
+        <span>Organizing & categorizing</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ PREVIEW SCREEN ════════ -->
+<div class="screen" id="screen-preview">
+  <div class="nav">
+    <div class="nav-logo">orginami</div>
+    <button class="btn-ghost" onclick="showScreen('save')">← Back</button>
+  </div>
+
+  <div style="padding:16px 20px 8px; background:white; border-bottom:1px solid var(--light);">
+    <div style="font-size:11px; font-weight:800; color:var(--mid); letter-spacing:0.15em; text-transform:uppercase; margin-bottom:4px;">Here's what we found</div>
+    <div style="font-size:13px; color:var(--mid);">Does this look right? Save it to your library.</div>
+  </div>
+
+  <div style="flex:1; overflow-y:auto; padding:20px; padding-bottom:20px;">
+    <span class="item-emoji" id="preview-emoji">📚</span>
+    <div class="item-cat-badge" id="preview-category">Category</div>
+    <div class="item-title" id="preview-title">Title</div>
+    <div class="item-source" id="preview-source">Source</div>
+    <div class="item-summary" id="preview-summary">Summary</div>
+
+    <div class="keyinfo-row" id="preview-keyinfo"></div>
+
+    <div class="section-title">Key Points</div>
+    <div id="preview-content"></div>
+  </div>
+
+  <div class="preview-actions">
+    <button class="btn-secondary" onclick="discardPreview()">Discard</button>
+    <button class="btn-primary" onclick="saveToLibrary()">Fold into Library 🌸</button>
+  </div>
+</div>
+
+<!-- ════════ ITEM SCREEN ════════ -->
+<div class="screen" id="screen-item">
+  <div class="nav">
+    <div class="nav-logo">orginami</div>
+    <button class="btn-ghost" onclick="showScreen('library')">← Library</button>
+  </div>
+
+  <div class="item-header" id="item-header">
+    <span class="item-emoji" id="item-emoji">📚</span>
+    <div class="item-cat-badge" id="item-category">Category</div>
+    <div class="item-title" id="item-title">Title</div>
+    <div class="item-source" id="item-source">Source</div>
+  </div>
+
+  <div class="item-body">
+    <div class="item-summary" id="item-summary"></div>
+    <div class="keyinfo-row" id="item-keyinfo"></div>
+    <div class="section-title">Content</div>
+    <div id="item-content"></div>
+    <a class="item-link" id="item-link" href="#" target="_blank">
+      🔗 View original source →
+    </a>
+    <div class="notes-wrap">
+      <div class="section-title" style="margin-top:16px;">My Notes</div>
+      <textarea class="notes-textarea" placeholder="Add a note... what did you change? How did it turn out?"></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Greeting time
+  const hour = new Date().getHours();
+  const greetEl = document.getElementById('greeting-time');
+  if (greetEl) {
+    if (hour < 12) greetEl.textContent = 'Good morning ☀️';
+    else if (hour < 17) greetEl.textContent = 'Good afternoon 🌤️';
+    else greetEl.textContent = 'Good evening 🌙';
+  }
+
+  // Search
+  window.searchLibrary = (query) => {
+    const cards = document.querySelectorAll('.save-card');
+    cards.forEach(card => {
+      const title = card.querySelector('.save-card-title').textContent.toLowerCase();
+      card.style.display = title.includes(query.toLowerCase()) ? 'flex' : 'none';
+    });
+  };
+</script>
+
+</body>
+</html>
