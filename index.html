@@ -288,12 +288,12 @@ Always return valid JSON with ALL fields including steps array.`
     ).join('');
 
     const contentEl = document.getElementById('item-content');
-    const hasSteps = d.steps && d.steps.length > 0;
+    const hasSteps = true; // Always show tabs
     
     if (hasSteps) {
       contentEl.innerHTML = `
         ${(() => {
-          const isWorkout = d.category && d.category.toLowerCase().includes('workout');
+          const isWorkout = d.category && (d.category.toLowerCase().includes('workout') || d.category.toLowerCase().includes('fitness') || d.category.toLowerCase().includes('exercise'));
           const tab1 = isWorkout ? 'Exercises' : 'Ingredients';
           const tab2 = isWorkout ? 'Form Tips' : 'Directions';
           return `<div style="display:flex;gap:8px;margin-bottom:12px;">
