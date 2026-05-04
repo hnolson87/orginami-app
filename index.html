@@ -364,6 +364,71 @@ Always return valid JSON with ALL fields including steps array.`
   --grad:    linear-gradient(135deg, #F490B8, #A888E8, #60B8E8);
 }
 
+/* ── DARK MODE ── */
+body.dark {
+  --white:   #141120;
+  --cream:   #0d0b12;
+  --ice:     #1a1724;
+  --charcoal:#f0eeff;
+  --mid:     rgba(255,255,255,0.4);
+  --light:   rgba(255,255,255,0.08);
+}
+body.dark .nav {
+  background: rgba(13,11,18,0.95);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+body.dark .auth-card,
+body.dark .save-card-wrap,
+body.dark .save-card,
+body.dark .search-bar,
+body.dark .key-chip,
+body.dark .content-item,
+body.dark .filter-chip,
+body.dark .item-header {
+  background: #1a1724 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+body.dark .bottom-nav {
+  background: rgba(13,11,18,0.97);
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+body.dark .save-card-header { filter: brightness(0.7); }
+body.dark .filter-chip { color: rgba(255,255,255,0.5) !important; }
+body.dark .filter-chip.active { color: white !important; }
+body.dark .auth-input { background: #0d0b12 !important; color: rgba(255,255,255,0.9) !important; border-color: rgba(255,255,255,0.1) !important; }
+body.dark .url-input { background: #0d0b12 !important; color: rgba(255,255,255,0.9) !important; }
+body.dark .notes-textarea { background: #0d0b12 !important; color: rgba(255,255,255,0.9) !important; border-color: rgba(255,255,255,0.1) !important; }
+body.dark .platform-chip { background: #1a1724 !important; border-color: rgba(255,255,255,0.08) !important; color: rgba(255,255,255,0.4) !important; }
+
+/* ── MINIMALIST MODE ── */
+body.minimal {
+  --cream:   #ffffff;
+  --ice:     #f5f5f5;
+  --grad:    linear-gradient(135deg, #1a1a1a, #1a1a1a);
+  --light:   #e8e8e8;
+}
+body.minimal .nav-logo,
+body.minimal .library-greeting-name em,
+body.minimal .save-title em,
+body.minimal .auth-logo-text {
+  background: none !important;
+  -webkit-text-fill-color: #1a1a1a !important;
+  color: #1a1a1a !important;
+}
+body.minimal .btn-primary,
+body.minimal .fab,
+body.minimal .filter-chip.active {
+  background: #1a1a1a !important;
+  box-shadow: none !important;
+}
+body.minimal .save-card-outer,
+body.minimal .cat-card-outer { background: none !important; }
+body.minimal .save-card { border: 1.5px solid #1a1a1a !important; }
+body.minimal .save-card-header { background: #f5f5f5 !important; }
+body.minimal .item-cat-badge { background: #1a1a1a !important; }
+body.minimal .bottom-nav { border-top: 1.5px solid #1a1a1a !important; }
+body.minimal .bot-nav-item.active { color: #1a1a1a !important; }
+
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--charcoal); min-height:100vh; }
 
@@ -757,7 +822,8 @@ body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--cha
 <div class="screen" id="screen-library">
   <div class="nav">
     <div class="nav-logo">orginami</div>
-    <div class="nav-actions">
+    <div class="nav-actions" style="display:flex;gap:8px;align-items:center;">
+      <button class="btn-ghost" id="theme-btn" onclick="cycleTheme()" style="font-size:16px;padding:8px 12px;">🌸</button>
       <button class="btn-ghost" onclick="logOut()">Sign out</button>
     </div>
   </div>
@@ -928,6 +994,30 @@ body { font-family:'Nunito',sans-serif; background:var(--cream); color:var(--cha
     else if (hour < 17) greetEl.textContent = 'Good afternoon 🌤️';
     else greetEl.textContent = 'Good evening 🌙';
   }
+
+  // Theme cycling
+  const themes = ['light', 'dark', 'minimal'];
+  const themeEmojis = { light: '🌸', dark: '🌙', minimal: '◻️' };
+  let currentTheme = localStorage.getItem('orginami-theme') || 'light';
+
+  function applyTheme(theme) {
+    document.body.classList.remove('dark', 'minimal');
+    if (theme === 'dark') document.body.classList.add('dark');
+    if (theme === 'minimal') document.body.classList.add('minimal');
+    const btn = document.getElementById('theme-btn');
+    if (btn) btn.textContent = themeEmojis[theme];
+    localStorage.setItem('orginami-theme', theme);
+    currentTheme = theme;
+  }
+
+  window.cycleTheme = () => {
+    const idx = themes.indexOf(currentTheme);
+    const next = themes[(idx + 1) % themes.length];
+    applyTheme(next);
+  };
+
+  // Apply saved theme on load
+  applyTheme(currentTheme);
 
   // Tab switching for item view
   window.showItemTab = (btn, tab) => {
