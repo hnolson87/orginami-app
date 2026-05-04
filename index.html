@@ -85,7 +85,6 @@
     document.getElementById('parsing-url').textContent = url;
 
     try {
-      // Ask Claude to parse based on URL + metadata
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,9 +121,11 @@ Detect what type of content this is and extract the relevant information. Return
       });
 
       const data = await response.json();
-      console.log('Claude response:', JSON.stringify(data).substring(0, 500));
-      if (!data.content || !data.content[0]) throw new Error('No content in response: ' + JSON.stringify(data).substring(0, 200));
-      const text = data.content[0].text.trim().replace(/```json|```/g, '').trim();
+      console.log('Claude raw:', JSON.stringify(data).substring(0, 300));
+      const text = (data.content && data.content[0] && data.content[0].text) 
+        ? data.content[0].text.trim().replace(/```json|```/g, '').trim()
+        : null;
+      if (!text) throw new Error('No text in response');
       const parsed = JSON.parse(text);
 
       // Show preview
