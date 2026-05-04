@@ -117,11 +117,23 @@ Detect what type of content this is and extract the relevant information. Return
   "emoji": "one relevant emoji for this category"
 }
 
-IMPORTANT RULES:
-- For recipes: keyInfo = prep time, cook time, servings. mainContent = ONLY the ingredients list (one per item, with amounts). Add a separate field called steps with the cooking directions.
-- For workouts: keyInfo = duration, difficulty, equipment. mainContent = list of exercises with sets/reps.
-- For articles/other: keyInfo = author, date, topic. mainContent = key points or takeaways.
-- Always return valid JSON. Never truncate.`
+CRITICAL RULES FOR RECIPES:
+- mainContent array = ONLY ingredients (one ingredient per item, with exact amount e.g. "1 cup butter, softened")
+- steps array = ONLY the cooking directions (one step per item, numbered actions)
+- NEVER mix ingredients and directions together
+- keyInfo = prep time, cook time, servings
+
+FOR WORKOUTS:
+- mainContent = list of exercises with sets and reps
+- steps = any form tips or modifications
+- keyInfo = duration, difficulty, equipment
+
+FOR ARTICLES/OTHER:
+- mainContent = key points or takeaways
+- steps = [] (empty array)
+- keyInfo = author, date, topic
+
+Always return valid JSON with ALL fields including steps array.`
           }]
         })
       });
