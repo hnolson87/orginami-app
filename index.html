@@ -85,11 +85,14 @@
     document.getElementById('parsing-url').textContent = url;
 
     try {
-      // Fetch the page content
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const pageRes = await fetch(proxyUrl);
+      // Fetch via worker — bypasses CORS and site blocking
+      const pageRes = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fetchUrl: url })
+      });
       const pageData = await pageRes.json();
-      const pageContent = pageData.contents ? pageData.contents.substring(0, 8000) : '';
+      const pageContent = pageData.content || '';
 
       // Ask Claude to parse it
       const response = await fetch(WORKER_URL, {
