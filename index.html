@@ -85,16 +85,7 @@
     document.getElementById('parsing-url').textContent = url;
 
     try {
-      // Fetch via worker — bypasses CORS and site blocking
-      const pageRes = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fetchUrl: url })
-      });
-      const pageData = await pageRes.json();
-      const pageContent = pageData.content || '';
-
-      // Ask Claude to parse it
+      // Ask Claude to parse based on URL + metadata
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,8 +96,6 @@
           messages: [{
             role: 'user',
             content: `Parse this web content from URL: ${url}
-
-Content: ${pageContent}
 
 Detect what type of content this is and extract the relevant information. Return ONLY this JSON:
 {
